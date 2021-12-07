@@ -48,9 +48,9 @@ TIM_HandleTypeDef htim3;
 const int PWM_MAX = 3361;  // Set this to the PWM generator counter period
 const int BLDC_MAGNETS_PER_REV = 7; // Set this to the number of magnet pairs in the motor
 
-volatile float motor_phase = 0;      // Desired phase location of the motor, in radians
-volatile float motor_velocity = 10.0;   // Desired motor velocity, in radians per second
-volatile float overall_power = 0.5;
+volatile uint32_t motor_phase = 0;      // Desired phase location of the motor, in rotations, 0.32 format
+volatile uint32_t motor_velocity = (0xFFFFFFFF / 1000);   // Desired motor velocity, in rotations per second per tick, 0.32 format
+volatile uint16_t overall_power = 0x8000;      // 0xFFFF is full power
 
 enum {
 	CONTROL_6_PHASE,
@@ -410,21 +410,19 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim)
 	// Compute the next desired motor position, and update
 	// the PWM settings.
 	int control_phase;
-	int on_val = overall_power * PWM_MAX;
+	int on_val = (overall_power * PWM_MAX) >> 16;
 
-	// Update desired motor position in terms of radians
-	motor_phase += motor_velocity / 1000.0;
-	if (motor_phase > 6.28) motor_phase -= 6.28;
-	if (motor_phase < 0) motor_phase += 6.28;
+	// Update desired motor position
+	motor_phase += motor_velocity;
 
 	// Convert motor position to phase position in terms of number of complete electrical phases
-	float phase_position = motor_phase * BLDC_MAGNETS_PER_REV / 6.28;
+	uint32_t phase_position = 0xffff & ((motor_phase >> 16) * BLDC_MAGNETS_PER_REV);
 
 	// Determine PWM settings from desired phase position
 	switch (control_mode)
 	{
 	case CONTROL_6_PHASE:
-		control_phase = ((int)(phase_position * 6)) % 6;  // results in number from 0 to 5
+		control_phase = (phase_position * 6) >> 16;  // results in number from 0 to 5
 		switch (control_phase)
 		{
 		case 0:
