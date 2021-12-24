@@ -46,20 +46,23 @@ const uint16_t sin_table[1024];
 TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim3;
+TIM_HandleTypeDef htim4;
 
 /* USER CODE BEGIN PV */
-const int PWM_MAX = 3361;  // Set this to the PWM generator counter period
+const int PWM_MAX = 3360;  // Set this to the PWM generator counter period
 const int BLDC_MAGNETS_PER_REV = 7; // Set this to the number of magnet pairs in the motor
 
-volatile uint32_t motor_phase = 0;      // Desired phase location of the motor, in rotations, 0.32 format
-volatile uint32_t motor_velocity = (0xFFFFFFFF / 1000);   // Desired motor velocity, in rotations per second per tick, 0.32 format
-volatile uint16_t overall_power = 0xFFFF;      // 0xFFFF is full power
+volatile uint32_t shaft_phase = 0;      // Desired phase location of the motor, in rotations, 0.32 format
+volatile int32_t motor_velocity = (0x7FFFFFFF / 500);   // Desired motor velocity, in fractional rotations per tick, max +-0.5 r / tick
+volatile uint16_t overall_power = 0x4FFF;      // 0xFFFF is full power
 
 enum {
 	CONTROL_6_PHASE,
-	CONTROL_SINUSOIDAL
+	CONTROL_6_PHASE_IFX007,
+	CONTROL_SINUSOIDAL,
+	CONTROL_SINUSOIDAL_IFX007
 };
-volatile int control_mode = CONTROL_SINUSOIDAL;
+volatile int control_mode = CONTROL_SINUSOIDAL_IFX007;
 
 #define A_OFFSET (0)
 #define B_OFFSET (2*1024/3)
@@ -72,12 +75,25 @@ static void MX_GPIO_Init(void);
 static void MX_TIM1_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_TIM3_Init(void);
+static void MX_TIM4_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+void setVelRadPerSecond(float velin) {
+	motor_velocity = (int32_t)(velin * (2.0*3.1416/1000)*0x7FFFFFFF);
+}
+
+void setVelRotPerSecond(float velin) {
+	motor_velocity = (int32_t)((velin/1000)*0x7FFFFFFF);
+}
+
+void setVelDegPerSecond(float velin) {
+	motor_velocity = (int32_t)(velin*(360.0/1000)*0x7FFFFFFF);
+}
 
 /* USER CODE END 0 */
 
@@ -112,6 +128,7 @@ int main(void)
   MX_TIM1_Init();
   MX_TIM2_Init();
   MX_TIM3_Init();
+  MX_TIM4_Init();
   /* USER CODE BEGIN 2 */
 
   // Set all PWM outputs to idle, by setting the compare value to zero.
@@ -136,6 +153,7 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+  setVelRotPerSecond(3);
   while (1)
   {
     /* USER CODE END WHILE */
@@ -239,7 +257,7 @@ static void MX_TIM1_Init(void)
   sConfigOC.Pulse = 0;
   sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
   sConfigOC.OCNPolarity = TIM_OCNPOLARITY_HIGH;
-  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  sConfigOC.OCFastMode = TIM_OCFAST_ENABLE;
   sConfigOC.OCIdleState = TIM_OCIDLESTATE_RESET;
   sConfigOC.OCNIdleState = TIM_OCNIDLESTATE_RESET;
   if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
@@ -318,8 +336,8 @@ static void MX_TIM2_Init(void)
   }
   sConfigOC.OCMode = TIM_OCMODE_PWM1;
   sConfigOC.Pulse = 0;
-  sConfigOC.OCPolarity = TIM_OCPOLARITY_LOW;
-  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_ENABLE;
   if (HAL_TIM_PWM_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
   {
     Error_Handler();
@@ -385,6 +403,51 @@ static void MX_TIM3_Init(void)
 }
 
 /**
+  * @brief TIM4 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM4_Init(void)
+{
+
+  /* USER CODE BEGIN TIM4_Init 0 */
+
+  /* USER CODE END TIM4_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM4_Init 1 */
+
+  /* USER CODE END TIM4_Init 1 */
+  htim4.Instance = TIM4;
+  htim4.Init.Prescaler = 84;
+  htim4.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim4.Init.Period = 65535;
+  htim4.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim4.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim4) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim4, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim4, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM4_Init 2 */
+
+  /* USER CODE END TIM4_Init 2 */
+
+}
+
+/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -394,10 +457,22 @@ static void MX_GPIO_Init(void)
   GPIO_InitTypeDef GPIO_InitStruct = {0};
 
   /* GPIO Ports Clock Enable */
+  __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_3, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin : PC13 */
+  GPIO_InitStruct.Pin = GPIO_PIN_13;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
   /*Configure GPIO pin : PA3 */
   GPIO_InitStruct.Pin = GPIO_PIN_3;
@@ -406,9 +481,21 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
+  /*Configure GPIO pins : PB6 PB7 PB8 */
+  GPIO_InitStruct.Pin = GPIO_PIN_6|GPIO_PIN_7|GPIO_PIN_8;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING_FALLING;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
 }
 
 /* USER CODE BEGIN 4 */
+
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+	HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
+}
+
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim)
 {
 	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_3, GPIO_PIN_SET);
@@ -419,10 +506,10 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim)
 	int on_val = (overall_power * PWM_MAX) >> 16;
 
 	// Update desired motor position
-	motor_phase += motor_velocity;
+	shaft_phase += motor_velocity;
 
 	// Convert motor position to phase position in terms of number of complete electrical phases
-	uint32_t phase_position = 0xffff & ((motor_phase >> 16) * BLDC_MAGNETS_PER_REV);
+	uint32_t phase_position = 0xffff & ((shaft_phase >> 16) * BLDC_MAGNETS_PER_REV);
 
 	// Determine PWM settings from desired phase position
 	switch (control_mode)
@@ -487,6 +574,66 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim)
 			break;
 		}
 		break;
+	case CONTROL_6_PHASE_IFX007:
+		control_phase = (phase_position * 6) >> 16;  // results in number from 0 to 5
+		switch (control_phase)
+		{
+		case 0:
+			// A+, B-
+			TIM1->CCR1 = PWM_MAX;
+			TIM1->CCR2 = on_val;
+			TIM1->CCR3 = 0;
+			TIM2->CCR1 = PWM_MAX;
+			TIM2->CCR2 = 0;
+			TIM2->CCR3 = 0;
+			break;
+		case 1:
+			// A+, C-
+			TIM1->CCR1 = PWM_MAX;
+			TIM1->CCR2 = 0;
+			TIM1->CCR3 = on_val;
+			TIM2->CCR1 = PWM_MAX;
+			TIM2->CCR2 = 0;
+			TIM2->CCR3 = 0;
+			break;
+		case 2:
+			// B+, C-
+			TIM1->CCR1 = 0;
+			TIM1->CCR2 = PWM_MAX;
+			TIM1->CCR3 = on_val;
+			TIM2->CCR1 = 0;
+			TIM2->CCR2 = PWM_MAX;
+			TIM2->CCR3 = 0;
+			break;
+		case 3:
+			// B+, A-
+			TIM1->CCR1 = on_val;
+			TIM1->CCR2 = PWM_MAX;
+			TIM1->CCR3 = 0;
+			TIM2->CCR1 = 0;
+			TIM2->CCR2 = PWM_MAX;
+			TIM2->CCR3 = 0;
+			break;
+		case 4:
+			// C+, A-
+			TIM1->CCR1 = on_val;
+			TIM1->CCR2 = 0;
+			TIM1->CCR3 = PWM_MAX;
+			TIM2->CCR1 = 0;
+			TIM2->CCR2 = 0;
+			TIM2->CCR3 = PWM_MAX;
+			break;
+		case 5:
+			// C+, B-
+			TIM1->CCR1 = 0;
+			TIM1->CCR2 = on_val;
+			TIM1->CCR3 = PWM_MAX;
+			TIM2->CCR1 = 0;
+			TIM2->CCR2 = 0;
+			TIM2->CCR3 = PWM_MAX;
+			break;
+		}
+		break;
 	case CONTROL_SINUSOIDAL:
 		control_phase = (phase_position * 1024) >> 16;  // results in number from 0 to 1023
 		switch (control_phase * 6 / 1024)
@@ -544,6 +691,66 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim)
 			TIM2->CCR1 = (on_val * -sin_x(control_phase + A_OFFSET)) >> 15;
 			TIM2->CCR2 = (on_val * -sin_x(control_phase + B_OFFSET)) >> 15;
 			TIM2->CCR3 = 0;
+			break;
+		}
+		break;
+	case CONTROL_SINUSOIDAL_IFX007:
+		control_phase = (phase_position * 1024) >> 16;  // results in number from 0 to 1023
+		switch (control_phase * 6 / 1024)
+		{
+		case 0:
+			// PWM: A+, C+,   B- on
+			TIM1->CCR1 = (on_val * sin_x(control_phase + A_OFFSET)) >> 15;
+			TIM1->CCR2 = PWM_MAX;
+			TIM1->CCR3 = (on_val * sin_x(control_phase + C_OFFSET)) >> 15;
+			TIM2->CCR1 = PWM_MAX;
+			TIM2->CCR2 = 0;
+			TIM2->CCR3 = PWM_MAX;
+			break;
+		case 1:
+			// PSM: C-, B-    A+ on
+			TIM1->CCR1 = PWM_MAX;
+			TIM1->CCR2 = (on_val * -sin_x(control_phase + B_OFFSET)) >> 15;
+			TIM1->CCR3 = (on_val * -sin_x(control_phase + C_OFFSET)) >> 15;
+			TIM2->CCR1 = PWM_MAX;
+			TIM2->CCR2 = 0;
+			TIM2->CCR3 = 0;
+			break;
+		case 2:
+			// PWM: A+, B+,    C- on
+			TIM1->CCR1 = (on_val * sin_x(control_phase + A_OFFSET)) >> 15;
+			TIM1->CCR2 = (on_val * sin_x(control_phase + B_OFFSET)) >> 15;
+			TIM1->CCR3 = PWM_MAX;
+			TIM2->CCR1 = PWM_MAX;
+			TIM2->CCR2 = PWM_MAX;
+			TIM2->CCR3 = 0;
+			break;
+		case 3:
+			// PWM: A-, C-    B+ on
+			TIM1->CCR1 = (on_val * -sin_x(control_phase + A_OFFSET)) >> 15;
+			TIM1->CCR2 = PWM_MAX;
+			TIM1->CCR3 = (on_val * -sin_x(control_phase + C_OFFSET)) >> 15;
+			TIM2->CCR1 = 0;
+			TIM2->CCR2 = PWM_MAX;
+			TIM2->CCR3 = 0;
+			break;
+		case 4:
+			// PWM: B+, C+,   A- on
+			TIM1->CCR1 = PWM_MAX;
+			TIM1->CCR2 = (on_val * sin_x(control_phase + B_OFFSET)) >> 15;
+			TIM1->CCR3 = (on_val * sin_x(control_phase + C_OFFSET)) >> 15;
+			TIM2->CCR1 = 0;
+			TIM2->CCR2 = PWM_MAX;
+			TIM2->CCR3 = PWM_MAX;
+			break;
+		case 5:
+			// PWM: A-, B-    C+ on
+			TIM1->CCR1 = (on_val * -sin_x(control_phase + A_OFFSET)) >> 15;
+			TIM1->CCR2 = (on_val * -sin_x(control_phase + B_OFFSET)) >> 15;
+			TIM1->CCR3 = PWM_MAX;
+			TIM2->CCR1 = 0;
+			TIM2->CCR2 = 0;
+			TIM2->CCR3 = PWM_MAX;
 			break;
 		}
 		break;
